@@ -92,45 +92,40 @@ int write_padding(int fd, unsigned pagesize, unsigned itemsize)
     }
 }
 
-static const unsigned mov_r1_0 = 0xe3a01000;
-static const unsigned add_r1_255 = 0xe28110ff;
-static const unsigned add_r1_zero = 0xe2811000;
+#define MOV(reg, x) (0xe3a00000 | (((reg) & 15) << 12) | ((x) & 0xff))
+#define ORR(rd, rn, rm, shift) (0xe1800000 | \
+	((rm) & 15) | \
+	(((rn) & 15) << 16) | \
+	(((rd) & 15) << 12) | \
+	(((shift) & 63) << 7) \
+)
 
 static void stick_mtype_hack(void** data, unsigned* size, unsigned mtype) {
-	//only armv6td2 and later support immediate values larger than 255 in MOV
-	int n_ff_opcodes = mtype / 255;
-	unsigned add_opcode = add_r1_zero | (mtype % 255);
-	unsigned new_size = sizeof(unsigned) * (n_ff_opcodes + 2) + (*size);
-	int i;
-	char* new_data;
-	unsigned* opcodes;
-
-	new_data = malloc(new_size);
+	//our stub is 7 instructions
+	unsigned new_size = (*size) + 7 * sizeof(unsigned);
+	void *new_data = malloc(new_size);
+	unsigned* opcodes = new_data;
 	if (!new_data) {
 		new_size = 0;
 		goto ret;
 	}
 
-	opcodes = (unsigned*)new_data;
-	*opcodes++ = mov_r1_0;
-
-	for (i = 0; i < n_ff_opcodes; i++) {
-		opcodes[i] = add_r1_255;
-	}
-	opcodes[i++] = add_opcode;
-	memcpy(opcodes + i, *data, *size);
+	*opcodes++ = MOV(1, (mtype & 0xff));
+	*opcodes++ = MOV(3, ((mtype >> 8) & 0xff));
+	*opcodes++ = ORR(1, 1, 3, 8);
+	*opcodes++ = MOV(3, ((mtype >> 16) & 0xff));
+	*opcodes++ = ORR(1, 1, 3, 16);
+	*opcodes++ = MOV(3, ((mtype >> 24) & 0xff));
+	*opcodes++ = ORR(1, 1, 3, 24);
+	memcpy(opcodes, *data, *size);
 
 ret:
 	if (*data) {
 		free(*data);
 	}
 
-	if (size) {
-		*size = new_size;
-	}
-	if (data) {
-		*data = new_data;
-	}
+	*size = new_size;
+	*data = new_data;
 }
 
 int main(int argc, char **argv)
